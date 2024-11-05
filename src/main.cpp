@@ -1,9 +1,13 @@
 #include <Arduino.h>
+#include <ReactESP.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <QTRSensors.h>
+#include <SparkFun_TB6612.h>
+
+using namespace reactesp;
 
 // Function prototypes
 void parseCommand(String command);
@@ -29,21 +33,46 @@ uint16_t qtrcall_min_values[SENSOR_COUNT];
 uint16_t qtrcall_max_values[SENSOR_COUNT];
 
 // Pin definitions
-const uint8_t LED_BLE_AWAIT = 13;
-const uint8_t LED_BLE_CONNECTED = 14;
-const uint8_t LED_MODE_IDLE = 27;
-const uint8_t LED_MODE_QTRCALL = 26;
-const uint8_t LED_MODE_LNFOLLOW = 25;
-const uint8_t QTR_PINS[] = {23, 22, 21, 19, 18, 17, 16, 2};
-const uint8_t QTR_EMITTER = 15;
+const uint8_t QTR_PINS[] = {36, 39, 34, 35, 32, 33, 25, 26};
+const uint8_t QTR_EMITTER = 00;
+const uint8_t LED_BLE_AWAIT = 15;
+const uint8_t LED_BLE_CONNECTED = 00;
+const uint8_t LED_MODE_IDLE = 14;
+const uint8_t LED_MODE_ACTIVE = 00;
+const uint8_t MOTOR_AIN1 = 17;
+const uint8_t MOTOR_BIN1 = 18;
+const uint8_t MOTOR_AIN2 = 16;
+const uint8_t MOTOR_BIN2 = 19;
+const uint8_t MOTOR_PWMA = 4;   // left??
+const uint8_t MOTOR_PWMB = 00;  // right??
+#define STBY 19
 
 // Vehicle controller setup
 String mode = "IDLE";
 float Kp = 0.00;
 float Ki = 0.00;
 float Kd = 0.00;
+
+uint8_t multiP = 1;
+uint8_t multiI  = 1;
+uint8_t multiD = 1;
+uint8_t Kp_final;
+uint8_t Ki_final;
+uint8_t Kd_final;
+float Pvalue;
+float Ivalue;
+float Dvalue;
+
+uint16_t position;
+int P, D, I, prev_error, pid_value, pid_error;
+int lsp, rsp;
+int lfspeed = 230;
+
 int left_motor = 0;
 int right_motor = 0;
+
+// LED blinkers
+EventLoop LEDActiveEvent;
 
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
@@ -71,8 +100,7 @@ void setup() {
   pinMode(LED_BLE_AWAIT, OUTPUT);
   pinMode(LED_BLE_CONNECTED, OUTPUT);
   pinMode(LED_MODE_IDLE, OUTPUT);
-  pinMode(LED_MODE_QTRCALL, OUTPUT);
-  pinMode(LED_MODE_LNFOLLOW, OUTPUT);
+  pinMode(LED_MODE_ACTIVE, OUTPUT);
 
   BLEDevice::init("LFAV-1");
 
@@ -106,6 +134,12 @@ void setup() {
   QTR.setTypeRC();
   QTR.setSensorPins(QTR_PINS, SENSOR_COUNT);
   QTR.setEmitterPin(QTR_EMITTER);
+
+  // Initialize LED blinker
+  LEDActiveEvent.onRepeat(500, [] () {
+      static bool state = false;
+      digitalWrite(LED_BUILTIN, state = !state);
+  });
 
 }
 
@@ -263,16 +297,14 @@ void setLedMode(String mode) {
 
   if (mode == "IDLE") {
     digitalWrite(LED_MODE_IDLE, HIGH);
-    digitalWrite(LED_MODE_QTRCALL, LOW);
-    digitalWrite(LED_MODE_LNFOLLOW, LOW);
+    digitalWrite(LED_MODE_ACTIVE, LOW);
   } else if (mode == "QTRCALL") {
     digitalWrite(LED_MODE_IDLE, LOW);
-    digitalWrite(LED_MODE_QTRCALL, HIGH);
-    digitalWrite(LED_MODE_LNFOLLOW, LOW);
+    digitalWrite(LED_MODE_ACTIVE, HIGH);
   } else if (mode == "LNFOLLOW") {
     digitalWrite(LED_MODE_IDLE, LOW);
-    digitalWrite(LED_MODE_QTRCALL, LOW);
-    digitalWrite(LED_MODE_LNFOLLOW, HIGH);
+    digitalWrite(LED_MODE_ACTIVE, LOW);
+    LEDActiveEvent.tick();
   }
 
 }
