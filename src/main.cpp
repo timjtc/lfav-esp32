@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <ReactESP.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
@@ -7,11 +6,25 @@
 #include <QTRSensors.h>
 #include <SparkFun_TB6612.h>
 
-using namespace reactesp;
-
 // Function prototypes
 void parseCommand(String command);
 void setLedMode(String mode);
+void robotControl();
+void updatePID(int error);
+void motorDrive(int left, int right);
+
+// Pin definitions
+const uint8_t QTR_PINS[] = {23, 22, 13, 15, 32, 33, 25, 26};
+const uint8_t QTR_EMITTER = 27;
+const uint8_t LED_MODE_IDLE = 14;
+const uint8_t LED_MODE_ACTIVE = 12;
+const uint8_t DRIVER_AIN1 = 17;
+const uint8_t DRIVER_BIN1 = 18;
+const uint8_t DRIVER_AIN2 = 16;
+const uint8_t DRIVER_BIN2 = 19;
+const uint8_t DRIVER_PWMA = 4;
+const uint8_t DRIVER_PWMB = 21;
+const uint8_t DRIVER_STBY = 5;
 
 // BLE setup
 const char* SERVICE_UUID = "a16587d4-584a-4668-b279-6ccb940cdfd0";
@@ -32,20 +45,11 @@ uint16_t sensor_values[SENSOR_COUNT];
 uint16_t qtrcall_min_values[SENSOR_COUNT];
 uint16_t qtrcall_max_values[SENSOR_COUNT];
 
-// Pin definitions
-const uint8_t QTR_PINS[] = {36, 39, 34, 35, 32, 33, 25, 26};
-const uint8_t QTR_EMITTER = 27;
-const uint8_t LED_BLE = 15;
-// const uint8_t LED_BLE_CONNECTED = 00;
-const uint8_t LED_MODE_IDLE = 14;
-const uint8_t LED_MODE_ACTIVE = 12;
-const uint8_t MOTOR_AIN1 = 17;
-const uint8_t MOTOR_BIN1 = 18;
-const uint8_t MOTOR_AIN2 = 16;
-const uint8_t MOTOR_BIN2 = 19;
-const uint8_t MOTOR_PWMA = 4;
-const uint8_t MOTOR_PWMB = 21;
-const uint8_t MOTOR_STBY = 5;
+// Motor setup
+const int offset_motorA = 1;
+const int offset_motorB = 1;
+Motor MotorA_Left = Motor(DRIVER_AIN1, DRIVER_AIN2, DRIVER_PWMA, offset_motorA, DRIVER_STBY);
+Motor MotorB_Right = Motor(DRIVER_BIN1, DRIVER_BIN2, DRIVER_PWMA, offset_motorB, DRIVER_STBY);
 
 // Vehicle controller setup
 String mode = "IDLE";
@@ -53,9 +57,6 @@ float Kp = 0.00;
 float Ki = 0.00;
 float Kd = 0.00;
 
-uint8_t multiP = 1;
-uint8_t multiI  = 1;
-uint8_t multiD = 1;
 uint8_t Kp_final;
 uint8_t Ki_final;
 uint8_t Kd_final;
@@ -64,16 +65,12 @@ float Ivalue;
 float Dvalue;
 
 uint16_t position;
-int P, D, I, prev_error, pid_value, pid_error;
+int P, I, D, prev_error, pid_value, pid_error;
 int lsp, rsp;
 int lfspeed = 230;
 
 int left_motor = 0;
 int right_motor = 0;
-
-// LED blinkers
-EventLoop LEDBluetoothEvent;
-EventLoop LEDActiveEvent;
 
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
@@ -98,20 +95,9 @@ void setup() {
 
   // Initialize serial and pin modes
   Serial.begin(115200);
-  pinMode(LED_BLE, OUTPUT);
+  // pinMode(LED_BLE, OUTPUT);
   pinMode(LED_MODE_IDLE, OUTPUT);
   pinMode(LED_MODE_ACTIVE, OUTPUT);
-
-  // Initialize LED blinkers
-  LEDActiveEvent.onRepeat(500, [] () {
-      static bool state = false;
-      digitalWrite(LED_MODE_ACTIVE, state = !state);
-  });
-
-  LEDBluetoothEvent.onRepeat(500, [] () {
-      static bool state = false;
-      digitalWrite(LED_BLE, state = !state);
-  });
 
   BLEDevice::init("LFAV-1");
 
@@ -139,7 +125,6 @@ void setup() {
   Service->start();
   Server->getAdvertising()->start();
   Serial.println("Waiting for a client connection...");
-  LEDBluetoothEvent.tick();
 
   // Initialize QTR sensor
   QTR.setTypeRC();
@@ -154,7 +139,6 @@ void loop() {
   if (dev_connected) {
 
     setLedMode(mode);
-    digitalWrite(LED_BLE, HIGH);
 
     if (mode == "QTRCALL") {
       for (uint16_t i = 0; i < 400; i++)
@@ -213,8 +197,12 @@ void loop() {
     }
 
     if (mode == "LNFOLLOW") {
-      uint16_t position = QTR.readLineBlack(sensor_values);
+      position = QTR.readLineBlack(sensor_values);
       Serial.println(position);
+
+      motorDrive(230, 230);
+
+      // robotControl();
 
       // send telemetry data
       tx_lnfollow = mode + "," +
@@ -233,7 +221,13 @@ void loop() {
     }
 
     if (mode == "IDLE") {
-       // send telemetry data
+      // Safe all motors
+      left_motor = 0;
+      right_motor = 0;
+      MotorA_Left.brake();
+      MotorB_Right.brake();
+
+      // send telemetry data
       tx_idle = mode + "," + 
                 String(Kp) + "," + 
                 String(Ki) + "," + 
@@ -257,7 +251,7 @@ void loop() {
     Serial.println("Advertising again...");
     last_dev_connected = dev_connected;
 
-    LEDBluetoothEvent.tick();
+    // digitalWrite(LED_BLE, HIGH);
 
   }
 
@@ -265,7 +259,7 @@ void loop() {
   if (dev_connected && !last_dev_connected) {
 
     last_dev_connected = dev_connected;
-    LEDBluetoothEvent.tick();
+    // digitalWrite(LED_BLE, HIGH);
 
   }
 
@@ -308,7 +302,72 @@ void setLedMode(String mode) {
     digitalWrite(LED_MODE_ACTIVE, HIGH);
   } else if (mode == "LNFOLLOW") {
     digitalWrite(LED_MODE_IDLE, LOW);
-    LEDActiveEvent.tick();
   }
+
+}
+
+void robotControl() {
+  // read calibrated sensor values and obtain a measure of the line position
+  // from 0 to 4000 (for a white line, use readLineWhite() instead)
+
+  position = QTR.readLineBlack(sensor_values);
+  pid_error = 2000 - position;
+  while (sensor_values[0] >= 980 &&
+         sensor_values[1] >= 980 && 
+         sensor_values[2] >= 980 && 
+         sensor_values[3] >= 980 && 
+         sensor_values[4] >= 980 && 
+         sensor_values[5] >= 980 && 
+         sensor_values[6] >= 980 && 
+         sensor_values[7] >= 980) 
+  {                             // A case when the line follower leaves the line
+    if (prev_error > 0) {       //Turn left if the line was to the left before
+      motorDrive(-230, 230);
+    }
+    else{
+      motorDrive(230, -230);    // Else turn right
+    }
+    position = QTR.readLineBlack(sensor_values);
+  }
+  
+  updatePID(pid_error);
+}
+
+void updatePID(int error){
+    P = pid_error;
+    I = I + pid_error;
+    D = pid_error - prev_error;
+    
+    Pvalue = Kp * P;
+    Ivalue = Ki * I;
+    Dvalue = Kd * D; 
+
+    float PIDvalue = Pvalue + Ivalue + Dvalue;
+    prev_error = error;
+
+    lsp = lfspeed - PIDvalue;
+    rsp = lfspeed + PIDvalue;
+
+    if (lsp > 255) {
+      lsp = 255;
+    }
+    if (lsp < -255) {
+      lsp = -255;
+    }
+    if (rsp > 255) {
+      rsp = 255;
+    }
+    if (rsp < -255) {
+      rsp = -255;
+    }
+    motorDrive(lsp, rsp);
+}
+
+void motorDrive(int left, int right) {
+  
+  left_motor = left;
+  right_motor = right;
+  MotorB_Right.drive(right);
+  MotorA_Left.drive(left);
 
 }
