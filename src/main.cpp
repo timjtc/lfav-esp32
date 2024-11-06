@@ -34,18 +34,18 @@ uint16_t qtrcall_max_values[SENSOR_COUNT];
 
 // Pin definitions
 const uint8_t QTR_PINS[] = {36, 39, 34, 35, 32, 33, 25, 26};
-const uint8_t QTR_EMITTER = 00;
-const uint8_t LED_BLE_AWAIT = 15;
-const uint8_t LED_BLE_CONNECTED = 00;
+const uint8_t QTR_EMITTER = 27;
+const uint8_t LED_BLE = 15;
+// const uint8_t LED_BLE_CONNECTED = 00;
 const uint8_t LED_MODE_IDLE = 14;
-const uint8_t LED_MODE_ACTIVE = 00;
+const uint8_t LED_MODE_ACTIVE = 12;
 const uint8_t MOTOR_AIN1 = 17;
 const uint8_t MOTOR_BIN1 = 18;
 const uint8_t MOTOR_AIN2 = 16;
 const uint8_t MOTOR_BIN2 = 19;
-const uint8_t MOTOR_PWMA = 4;   // left??
-const uint8_t MOTOR_PWMB = 00;  // right??
-#define STBY 19
+const uint8_t MOTOR_PWMA = 4;
+const uint8_t MOTOR_PWMB = 21;
+const uint8_t MOTOR_STBY = 5;
 
 // Vehicle controller setup
 String mode = "IDLE";
@@ -72,6 +72,7 @@ int left_motor = 0;
 int right_motor = 0;
 
 // LED blinkers
+EventLoop LEDBluetoothEvent;
 EventLoop LEDActiveEvent;
 
 class ServerCallbacks : public BLEServerCallbacks {
@@ -97,10 +98,20 @@ void setup() {
 
   // Initialize serial and pin modes
   Serial.begin(115200);
-  pinMode(LED_BLE_AWAIT, OUTPUT);
-  pinMode(LED_BLE_CONNECTED, OUTPUT);
+  pinMode(LED_BLE, OUTPUT);
   pinMode(LED_MODE_IDLE, OUTPUT);
   pinMode(LED_MODE_ACTIVE, OUTPUT);
+
+  // Initialize LED blinkers
+  LEDActiveEvent.onRepeat(500, [] () {
+      static bool state = false;
+      digitalWrite(LED_MODE_ACTIVE, state = !state);
+  });
+
+  LEDBluetoothEvent.onRepeat(500, [] () {
+      static bool state = false;
+      digitalWrite(LED_BLE, state = !state);
+  });
 
   BLEDevice::init("LFAV-1");
 
@@ -128,18 +139,12 @@ void setup() {
   Service->start();
   Server->getAdvertising()->start();
   Serial.println("Waiting for a client connection...");
-  digitalWrite(LED_BLE_AWAIT, HIGH);
+  LEDBluetoothEvent.tick();
 
   // Initialize QTR sensor
   QTR.setTypeRC();
   QTR.setSensorPins(QTR_PINS, SENSOR_COUNT);
   QTR.setEmitterPin(QTR_EMITTER);
-
-  // Initialize LED blinker
-  LEDActiveEvent.onRepeat(500, [] () {
-      static bool state = false;
-      digitalWrite(LED_BUILTIN, state = !state);
-  });
 
 }
 
@@ -149,8 +154,7 @@ void loop() {
   if (dev_connected) {
 
     setLedMode(mode);
-    digitalWrite(LED_BLE_CONNECTED, HIGH);
-    digitalWrite(LED_BLE_AWAIT, LOW);
+    digitalWrite(LED_BLE, HIGH);
 
     if (mode == "QTRCALL") {
       for (uint16_t i = 0; i < 400; i++)
@@ -253,14 +257,15 @@ void loop() {
     Serial.println("Advertising again...");
     last_dev_connected = dev_connected;
 
-    digitalWrite(LED_BLE_CONNECTED, LOW);
-    digitalWrite(LED_BLE_AWAIT, HIGH);
+    LEDBluetoothEvent.tick();
+
   }
 
   // While connecting
   if (dev_connected && !last_dev_connected) {
 
     last_dev_connected = dev_connected;
+    LEDBluetoothEvent.tick();
 
   }
 
@@ -303,7 +308,6 @@ void setLedMode(String mode) {
     digitalWrite(LED_MODE_ACTIVE, HIGH);
   } else if (mode == "LNFOLLOW") {
     digitalWrite(LED_MODE_IDLE, LOW);
-    digitalWrite(LED_MODE_ACTIVE, LOW);
     LEDActiveEvent.tick();
   }
 
