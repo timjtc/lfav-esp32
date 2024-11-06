@@ -1,10 +1,13 @@
 #include <Arduino.h>
+#include <ReactESP.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <QTRSensors.h>
 #include <SparkFun_TB6612.h>
+
+using namespace reactesp;
 
 // Function prototypes
 void parseCommand(String command);
@@ -44,6 +47,7 @@ QTRSensors QTR;
 uint16_t sensor_values[SENSOR_COUNT];
 uint16_t qtrcall_min_values[SENSOR_COUNT];
 uint16_t qtrcall_max_values[SENSOR_COUNT];
+uint8_t qtrcall_counter = 0;
 
 // Motor setup
 const int offset_motorA = 1;
@@ -71,6 +75,10 @@ int lfspeed = 230;
 
 int left_motor = 0;
 int right_motor = 0;
+
+// Blinker setup
+EventLoop LEDActiveBlinker;
+EventLoop LEDIdleBlinker;
 
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
@@ -130,6 +138,20 @@ void setup() {
   QTR.setTypeRC();
   QTR.setSensorPins(QTR_PINS, SENSOR_COUNT);
   QTR.setEmitterPin(QTR_EMITTER);
+  for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
+    qtrcall_min_values[i] = 0;
+    qtrcall_max_values[i] = 0;
+  }
+
+  // Initialize blinkers
+  LEDActiveBlinker.onRepeat(250, [] () {
+      static bool state = false;
+      digitalWrite(LED_MODE_ACTIVE, state = !state);
+  });
+  LEDIdleBlinker.onRepeat(250, [] () {
+      static bool state = false;
+      digitalWrite(LED_MODE_IDLE, state = !state);
+  });
 
 }
 
@@ -144,53 +166,16 @@ void loop() {
       for (uint16_t i = 0; i < 400; i++)
       {
         QTR.calibrate();
-        tx_qtrcall = mode + "," +
-                    String(i) + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-" + "," +
-                    "-";
-        CharTX->setValue(tx_qtrcall.c_str());
-        CharTX->notify();
+        qtrcall_counter = i;
+        sendTelemetry();
       }
       for (uint8_t i = 0; i < SENSOR_COUNT; i++)
       {
         qtrcall_min_values[i] = QTR.calibrationOn.minimum[i];
         qtrcall_max_values[i] = QTR.calibrationOn.maximum[i];
       }
-      tx_qtrcall = mode + "," +
-                  "400" + "," +
-                  qtrcall_min_values[0] + "," +
-                  qtrcall_min_values[1] + "," +
-                  qtrcall_min_values[2] + "," +
-                  qtrcall_min_values[3] + "," +
-                  qtrcall_min_values[4] + "," +
-                  qtrcall_min_values[5] + "," +
-                  qtrcall_min_values[6] + "," +
-                  qtrcall_min_values[7] + "," +
-                  qtrcall_max_values[0] + "," +
-                  qtrcall_max_values[1] + "," +
-                  qtrcall_max_values[2] + "," +
-                  qtrcall_max_values[3] + "," +
-                  qtrcall_max_values[4] + "," +
-                  qtrcall_max_values[5] + "," +
-                  qtrcall_max_values[6] + "," +
-                  qtrcall_max_values[7];
-      CharTX->setValue(tx_qtrcall.c_str());
-      CharTX->notify();
-
+      
+      sendTelemetry();
       mode = "IDLE";
 
       delay(500);
@@ -204,20 +189,7 @@ void loop() {
 
       // robotControl();
 
-      // send telemetry data
-      tx_lnfollow = mode + "," +
-                    String(left_motor) + "," + 
-                    String(right_motor) + "," +
-                    String(sensor_values[0]) + "," +
-                    String(sensor_values[1]) + "," +
-                    String(sensor_values[2]) + "," +
-                    String(sensor_values[3]) + "," +
-                    String(sensor_values[4]) + "," +
-                    String(sensor_values[5]) + "," +
-                    String(sensor_values[6]) + "," +
-                    String(sensor_values[7]);
-      CharTX->setValue(tx_lnfollow.c_str());
-      CharTX->notify();
+      sendTelemetry();
     }
 
     if (mode == "IDLE") {
@@ -227,13 +199,8 @@ void loop() {
       MotorA_Left.brake();
       MotorB_Right.brake();
 
-      // send telemetry data
-      tx_idle = mode + "," + 
-                String(Kp) + "," + 
-                String(Ki) + "," + 
-                String(Kd);
-      CharTX->setValue(tx_idle.c_str());
-      CharTX->notify();
+      sendTelemetry();
+      
       delay(500);
     }
 
@@ -251,7 +218,7 @@ void loop() {
     Serial.println("Advertising again...");
     last_dev_connected = dev_connected;
 
-    // digitalWrite(LED_BLE, HIGH);
+    LEDIdleBlinker.tick();
 
   }
 
@@ -259,7 +226,7 @@ void loop() {
   if (dev_connected && !last_dev_connected) {
 
     last_dev_connected = dev_connected;
-    // digitalWrite(LED_BLE, HIGH);
+    LEDIdleBlinker.tick();
 
   }
 
@@ -292,6 +259,54 @@ void parseCommand(String command) {
   }
 }
 
+void sendTelemetry() {
+  if (!dev_connected) return;
+  if (mode == "IDLE")
+  {
+    tx_idle = mode + "," + 
+              String(Kp) + "," + 
+              String(Ki) + "," + 
+              String(Kd);
+    CharTX->setValue(tx_idle.c_str());
+    CharTX->notify();
+  } else if (mode == "LNFOLLOW") {
+    tx_lnfollow = mode + "," +
+                  String(left_motor) + "," + 
+                  String(right_motor) + "," +
+                  String(sensor_values[0]) + "," +
+                  String(sensor_values[1]) + "," +
+                  String(sensor_values[2]) + "," +
+                  String(sensor_values[3]) + "," +
+                  String(sensor_values[4]) + "," +
+                  String(sensor_values[5]) + "," +
+                  String(sensor_values[6]) + "," +
+                  String(sensor_values[7]);
+    CharTX->setValue(tx_lnfollow.c_str());
+    CharTX->notify();
+  } else if (mode == "QTRCALL") {
+    tx_qtrcall = mode + "," +
+                  String(qtrcall_counter) + "," +
+                  String(qtrcall_min_values[0]) + "," +
+                  String(qtrcall_min_values[1]) + "," +
+                  String(qtrcall_min_values[2]) + "," +
+                  String(qtrcall_min_values[3]) + "," +
+                  String(qtrcall_min_values[4]) + "," +
+                  String(qtrcall_min_values[5]) + "," +
+                  String(qtrcall_min_values[6]) + "," +
+                  String(qtrcall_min_values[7]) + "," +
+                  String(qtrcall_max_values[0]) + "," +
+                  String(qtrcall_max_values[1]) + "," +
+                  String(qtrcall_max_values[2]) + "," +
+                  String(qtrcall_max_values[3]) + "," +
+                  String(qtrcall_max_values[4]) + "," +
+                  String(qtrcall_max_values[5]) + "," +
+                  String(qtrcall_max_values[6]) + "," +
+                  String(qtrcall_max_values[7]);
+      CharTX->setValue(tx_qtrcall.c_str());
+      CharTX->notify();
+  }
+}
+
 void setLedMode(String mode) {
 
   if (mode == "IDLE") {
@@ -302,6 +317,7 @@ void setLedMode(String mode) {
     digitalWrite(LED_MODE_ACTIVE, HIGH);
   } else if (mode == "LNFOLLOW") {
     digitalWrite(LED_MODE_IDLE, LOW);
+    LEDActiveBlinker.tick();
   }
 
 }
