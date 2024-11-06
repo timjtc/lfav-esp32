@@ -12,6 +12,7 @@ using namespace reactesp;
 // Function prototypes
 void parseCommand(String command);
 void setLedMode(String mode);
+void sendTelemetry();
 void robotControl();
 void updatePID(int error);
 void motorDrive(int left, int right);
@@ -200,7 +201,7 @@ void loop() {
       MotorB_Right.brake();
 
       sendTelemetry();
-      
+
       delay(500);
     }
 
