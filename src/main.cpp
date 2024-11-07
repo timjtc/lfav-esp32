@@ -40,21 +40,22 @@ bool dev_connected = false;
 bool last_dev_connected = false;
 String tx_idle = "";
 String tx_lnfollow = "";
-String tx_qtrcall = "";
+String tx_qtrcal = "";
 
 // QTR sensor setup
 const uint8_t SENSOR_COUNT = 8;
 QTRSensors QTR;
 uint16_t sensor_values[SENSOR_COUNT];
-uint16_t qtrcall_min_values[SENSOR_COUNT];
-uint16_t qtrcall_max_values[SENSOR_COUNT];
-uint8_t qtrcall_counter = 0;
+uint16_t qtrcal_min_values[SENSOR_COUNT];
+uint16_t qtrcal_max_values[SENSOR_COUNT];
+uint16_t qtrcal_max_ref;
+uint8_t qtrcal_counter = 0;
 
 // Motor setup
 const int offset_motorA = 1;
 const int offset_motorB = 1;
 Motor MotorA_Left = Motor(DRIVER_AIN1, DRIVER_AIN2, DRIVER_PWMA, offset_motorA, DRIVER_STBY);
-Motor MotorB_Right = Motor(DRIVER_BIN1, DRIVER_BIN2, DRIVER_PWMA, offset_motorB, DRIVER_STBY);
+Motor MotorB_Right = Motor(DRIVER_BIN1, DRIVER_BIN2, DRIVER_PWMB, offset_motorB, DRIVER_STBY);
 
 // Vehicle controller setup
 String mode = "IDLE";
@@ -104,9 +105,18 @@ void setup() {
 
   // Initialize serial and pin modes
   Serial.begin(115200);
-  // pinMode(LED_BLE, OUTPUT);
   pinMode(LED_MODE_IDLE, OUTPUT);
   pinMode(LED_MODE_ACTIVE, OUTPUT);
+
+  // Initialize blinkers
+  LEDActiveBlinker.onRepeat(250, [] () {
+      static bool state = false;
+      digitalWrite(LED_MODE_ACTIVE, state = !state);
+  });
+  LEDIdleBlinker.onRepeat(250, [] () {
+      static bool state = false;
+      digitalWrite(LED_MODE_IDLE, state = !state);
+  });
 
   BLEDevice::init("LFAV-1");
 
@@ -134,25 +144,16 @@ void setup() {
   Service->start();
   Server->getAdvertising()->start();
   Serial.println("Waiting for a client connection...");
+  digitalWrite(LED_MODE_IDLE, HIGH);
 
   // Initialize QTR sensor
   QTR.setTypeRC();
   QTR.setSensorPins(QTR_PINS, SENSOR_COUNT);
   QTR.setEmitterPin(QTR_EMITTER);
   for (uint8_t i = 0; i < SENSOR_COUNT; i++) {
-    qtrcall_min_values[i] = 0;
-    qtrcall_max_values[i] = 0;
+    qtrcal_min_values[i] = 0;
+    qtrcal_max_values[i] = 0;
   }
-
-  // Initialize blinkers
-  LEDActiveBlinker.onRepeat(250, [] () {
-      static bool state = false;
-      digitalWrite(LED_MODE_ACTIVE, state = !state);
-  });
-  LEDIdleBlinker.onRepeat(250, [] () {
-      static bool state = false;
-      digitalWrite(LED_MODE_IDLE, state = !state);
-  });
 
 }
 
@@ -166,16 +167,17 @@ void loop() {
     if (mode == "QTRCALL") {
       for (uint16_t i = 0; i < 400; i++)
       {
+        qtrcal_counter = i;
         QTR.calibrate();
-        qtrcall_counter = i;
         sendTelemetry();
       }
+      qtrcal_counter = uint8_t(400);
       for (uint8_t i = 0; i < SENSOR_COUNT; i++)
       {
-        qtrcall_min_values[i] = QTR.calibrationOn.minimum[i];
-        qtrcall_max_values[i] = QTR.calibrationOn.maximum[i];
+        qtrcal_min_values[i] = QTR.calibrationOn.minimum[i];
+        qtrcal_max_values[i] = QTR.calibrationOn.maximum[i];
       }
-      
+      qtrcal_max_ref = *std::min_element(qtrcal_max_values, qtrcal_max_values + (sizeof(qtrcal_max_values) / sizeof(qtrcal_max_values[0])));
       sendTelemetry();
       mode = "IDLE";
 
@@ -185,11 +187,7 @@ void loop() {
     if (mode == "LNFOLLOW") {
       position = QTR.readLineBlack(sensor_values);
       Serial.println(position);
-
-      motorDrive(230, 230);
-
-      // robotControl();
-
+      robotControl();
       sendTelemetry();
     }
 
@@ -219,7 +217,7 @@ void loop() {
     Serial.println("Advertising again...");
     last_dev_connected = dev_connected;
 
-    LEDIdleBlinker.tick();
+    digitalWrite(LED_MODE_IDLE, HIGH);
 
   }
 
@@ -227,7 +225,7 @@ void loop() {
   if (dev_connected && !last_dev_connected) {
 
     last_dev_connected = dev_connected;
-    LEDIdleBlinker.tick();
+    digitalWrite(LED_MODE_IDLE, HIGH);
 
   }
 
@@ -285,25 +283,25 @@ void sendTelemetry() {
     CharTX->setValue(tx_lnfollow.c_str());
     CharTX->notify();
   } else if (mode == "QTRCALL") {
-    tx_qtrcall = mode + "," +
-                  String(qtrcall_counter) + "," +
-                  String(qtrcall_min_values[0]) + "," +
-                  String(qtrcall_min_values[1]) + "," +
-                  String(qtrcall_min_values[2]) + "," +
-                  String(qtrcall_min_values[3]) + "," +
-                  String(qtrcall_min_values[4]) + "," +
-                  String(qtrcall_min_values[5]) + "," +
-                  String(qtrcall_min_values[6]) + "," +
-                  String(qtrcall_min_values[7]) + "," +
-                  String(qtrcall_max_values[0]) + "," +
-                  String(qtrcall_max_values[1]) + "," +
-                  String(qtrcall_max_values[2]) + "," +
-                  String(qtrcall_max_values[3]) + "," +
-                  String(qtrcall_max_values[4]) + "," +
-                  String(qtrcall_max_values[5]) + "," +
-                  String(qtrcall_max_values[6]) + "," +
-                  String(qtrcall_max_values[7]);
-      CharTX->setValue(tx_qtrcall.c_str());
+    tx_qtrcal = mode + "," +
+                  String(qtrcal_counter) + "," +
+                  String(qtrcal_min_values[0]) + "," +
+                  String(qtrcal_min_values[1]) + "," +
+                  String(qtrcal_min_values[2]) + "," +
+                  String(qtrcal_min_values[3]) + "," +
+                  String(qtrcal_min_values[4]) + "," +
+                  String(qtrcal_min_values[5]) + "," +
+                  String(qtrcal_min_values[6]) + "," +
+                  String(qtrcal_min_values[7]) + "," +
+                  String(qtrcal_max_values[0]) + "," +
+                  String(qtrcal_max_values[1]) + "," +
+                  String(qtrcal_max_values[2]) + "," +
+                  String(qtrcal_max_values[3]) + "," +
+                  String(qtrcal_max_values[4]) + "," +
+                  String(qtrcal_max_values[5]) + "," +
+                  String(qtrcal_max_values[6]) + "," +
+                  String(qtrcal_max_values[7]);
+      CharTX->setValue(tx_qtrcal.c_str());
       CharTX->notify();
   }
 }
@@ -311,7 +309,7 @@ void sendTelemetry() {
 void setLedMode(String mode) {
 
   if (mode == "IDLE") {
-    digitalWrite(LED_MODE_IDLE, HIGH);
+    LEDIdleBlinker.tick();
     digitalWrite(LED_MODE_ACTIVE, LOW);
   } else if (mode == "QTRCALL") {
     digitalWrite(LED_MODE_IDLE, LOW);
@@ -329,14 +327,14 @@ void robotControl() {
 
   position = QTR.readLineBlack(sensor_values);
   pid_error = 2000 - position;
-  while (sensor_values[0] >= 980 &&
-         sensor_values[1] >= 980 && 
-         sensor_values[2] >= 980 && 
-         sensor_values[3] >= 980 && 
-         sensor_values[4] >= 980 && 
-         sensor_values[5] >= 980 && 
-         sensor_values[6] >= 980 && 
-         sensor_values[7] >= 980) 
+  while (sensor_values[0] >= qtrcal_max_ref &&
+         sensor_values[1] >= qtrcal_max_ref && 
+         sensor_values[2] >= qtrcal_max_ref && 
+         sensor_values[3] >= qtrcal_max_ref && 
+         sensor_values[4] >= qtrcal_max_ref && 
+         sensor_values[5] >= qtrcal_max_ref && 
+         sensor_values[6] >= qtrcal_max_ref && 
+         sensor_values[7] >= qtrcal_max_ref) 
   {                             // A case when the line follower leaves the line
     if (prev_error > 0) {       //Turn left if the line was to the left before
       motorDrive(-230, 230);
@@ -384,7 +382,7 @@ void motorDrive(int left, int right) {
   
   left_motor = left;
   right_motor = right;
-  MotorB_Right.drive(right);
   MotorA_Left.drive(left);
+  MotorB_Right.drive(right);
 
 }
