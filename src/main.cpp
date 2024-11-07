@@ -326,7 +326,7 @@ void robotControl() {
   // from 0 to 4000 (for a white line, use readLineWhite() instead)
 
   position = QTR.readLineBlack(sensor_values);
-  pid_error = 2000 - position;
+  pid_error = 3500 - position;
   while (sensor_values[0] >= qtrcal_max_ref &&
          sensor_values[1] >= qtrcal_max_ref && 
          sensor_values[2] >= qtrcal_max_ref && 
