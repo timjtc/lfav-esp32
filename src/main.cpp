@@ -49,7 +49,9 @@ uint16_t sensor_values[SENSOR_COUNT];
 uint16_t qtrcal_min_values[SENSOR_COUNT];
 uint16_t qtrcal_max_values[SENSOR_COUNT];
 uint16_t qtrcal_max_ref;
+uint16_t qtrcal_min_ref;
 uint8_t qtrcal_counter = 0;
+uint16_t center;
 
 // Motor setup
 const int offset_motorA = 1;
@@ -178,6 +180,7 @@ void loop() {
         qtrcal_max_values[i] = QTR.calibrationOn.maximum[i];
       }
       qtrcal_max_ref = *std::min_element(qtrcal_max_values, qtrcal_max_values + (sizeof(qtrcal_max_values) / sizeof(qtrcal_max_values[0])));
+      qtrcal_min_ref = *std::min_element(qtrcal_min_values, qtrcal_min_values + (sizeof(qtrcal_min_values) / sizeof(qtrcal_min_values[0])));
       sendTelemetry();
       mode = "IDLE";
 
@@ -253,6 +256,9 @@ void parseCommand(String command) {
   } else if (command.startsWith("set kd ")) {
     String kdValue = command.substring(7);
     Kd = kdValue.toFloat();
+  } else if (command.startsWith("set ce ")) {
+    String ce = command.substring(7);
+    center = ce.toInt();
   } else {
     Serial.println("Unknown command: " + command);
   }
@@ -265,7 +271,8 @@ void sendTelemetry() {
     tx_idle = mode + "," + 
               String(Kp) + "," + 
               String(Ki) + "," + 
-              String(Kd);
+              String(Kd) + "," +
+              String(center);
     CharTX->setValue(tx_idle.c_str());
     CharTX->notify();
   } else if (mode == "LNFOLLOW") {
@@ -326,20 +333,17 @@ void robotControl() {
   // from 0 to 4000 (for a white line, use readLineWhite() instead)
 
   position = QTR.readLineBlack(sensor_values);
-  pid_error = 3500 - position;
-  while (sensor_values[0] >= qtrcal_max_ref &&
-         sensor_values[1] >= qtrcal_max_ref && 
-         sensor_values[2] >= qtrcal_max_ref && 
-         sensor_values[3] >= qtrcal_max_ref && 
-         sensor_values[4] >= qtrcal_max_ref && 
-         sensor_values[5] >= qtrcal_max_ref && 
-         sensor_values[6] >= qtrcal_max_ref && 
-         sensor_values[7] >= qtrcal_max_ref) 
+  pid_error = center - position;
+  while (sensor_values[1] <= qtrcal_min_ref && 
+         sensor_values[2] <= qtrcal_min_ref && 
+         sensor_values[3] <= qtrcal_min_ref && 
+         sensor_values[4] <= qtrcal_min_ref && 
+         sensor_values[5] <= qtrcal_min_ref) 
   {                             // A case when the line follower leaves the line
     if (prev_error > 0) {       //Turn left if the line was to the left before
       motorDrive(-230, 230);
     }
-    else{
+    else {
       motorDrive(230, -230);    // Else turn right
     }
     position = QTR.readLineBlack(sensor_values);
@@ -355,7 +359,7 @@ void updatePID(int error){
     
     Pvalue = Kp * P;
     Ivalue = Ki * I;
-    Dvalue = Kd * D; 
+    Dvalue = Kd * D;
 
     float PIDvalue = Pvalue + Ivalue + Dvalue;
     prev_error = error;
