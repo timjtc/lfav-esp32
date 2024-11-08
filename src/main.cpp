@@ -13,9 +13,10 @@ using namespace reactesp;
 void parseCommand(String command);
 void setLedMode(String mode);
 void sendTelemetry();
-void robotControl();
-void updatePID(int error);
 void motorDrive(int left, int right);
+void pidLineFollow();
+void updatePID(int error);
+void bangLineFollow();
 
 // Pin definitions
 const uint8_t QTR_PINS[] = {23, 22, 13, 15, 32, 33, 25, 26};
@@ -188,9 +189,12 @@ void loop() {
     }
 
     if (mode == "LNFOLLOW") {
-      position = QTR.readLineBlack(sensor_values);
-      Serial.println(position);
-      robotControl();
+      pidLineFollow();
+      sendTelemetry();
+    }
+
+    if (mode == "BANGLF") {
+      bangLineFollow();
       sendTelemetry();
     }
 
@@ -240,12 +244,14 @@ void parseCommand(String command) {
     String mode_value = command.substring(5);
     if (mode_value == "lf") {
       mode = "LNFOLLOW";
+    } else if (mode_value == "blf") {
+      mode = "BANGLF";
     } else if (mode_value == "qc") {
       mode = "QTRCALL";
     } else if (mode_value == "id") {
       mode = "IDLE";
     } else {
-      Serial.println("Unknown mode: " + mode_value + ". Available modes: id, qc, lf");
+      Serial.println("Unknown mode: " + mode_value + ". Available modes: id, qc, lf, blf");
     }
   } else if (command.startsWith("set kp ")) {
     String kpValue = command.substring(7);
@@ -286,7 +292,8 @@ void sendTelemetry() {
                   String(sensor_values[4]) + "," +
                   String(sensor_values[5]) + "," +
                   String(sensor_values[6]) + "," +
-                  String(sensor_values[7]);
+                  String(sensor_values[7]) + "," +
+                  String(position);
     CharTX->setValue(tx_lnfollow.c_str());
     CharTX->notify();
   } else if (mode == "QTRCALL") {
@@ -310,6 +317,21 @@ void sendTelemetry() {
                   String(qtrcal_max_values[7]);
       CharTX->setValue(tx_qtrcal.c_str());
       CharTX->notify();
+  } else if (mode == "BANGLF") {
+    tx_lnfollow = mode + "," +
+                  String(left_motor) + "," + 
+                  String(right_motor) + "," +
+                  String(sensor_values[0]) + "," +
+                  String(sensor_values[1]) + "," +
+                  String(sensor_values[2]) + "," +
+                  String(sensor_values[3]) + "," +
+                  String(sensor_values[4]) + "," +
+                  String(sensor_values[5]) + "," +
+                  String(sensor_values[6]) + "," +
+                  String(sensor_values[7]) + "," +
+                  String(position);
+    CharTX->setValue(tx_lnfollow.c_str());
+    CharTX->notify();
   }
 }
 
@@ -328,7 +350,40 @@ void setLedMode(String mode) {
 
 }
 
-void robotControl() {
+void motorDrive(int left, int right) {
+  
+  left_motor = left;
+  right_motor = right;
+  MotorA_Left.drive(left);
+  MotorB_Right.drive(right);
+
+}
+
+void bangLineFollow() {
+
+  position = QTR.readLineBlack(sensor_values);
+
+  // Define thresholds for detecting the black line
+  const uint16_t threshold = ((qtrcal_min_ref + qtrcal_max_ref) / 2) - qtrcal_min_ref; // Adjust this value based on your sensor calibration
+
+  // Check the sensor values and decide the direction
+  if (sensor_values[3] > threshold || sensor_values[4] > threshold) {
+    // Move forward if the center sensors detect the black line
+    motorDrive(lfspeed, lfspeed);
+  } else if (sensor_values[5] > threshold || sensor_values[6] > threshold || sensor_values[7] > threshold) {
+    // Turn right if the rightmost sensors detect the black line
+    motorDrive(lfspeed, -lfspeed);
+  } else if (sensor_values[0] > threshold || sensor_values[1] > threshold || sensor_values[2] > threshold) {
+    // Turn left if the leftmost sensors detect the black line
+    motorDrive(-lfspeed, lfspeed);
+  } else {
+    // Turn around if no sensors detect the black line
+    motorDrive(-lfspeed, lfspeed);
+  }
+  
+}
+
+void pidLineFollow() {
   // read calibrated sensor values and obtain a measure of the line position
   // from 0 to 4000 (for a white line, use readLineWhite() instead)
 
@@ -380,13 +435,4 @@ void updatePID(int error){
       rsp = -255;
     }
     motorDrive(lsp, rsp);
-}
-
-void motorDrive(int left, int right) {
-  
-  left_motor = left;
-  right_motor = right;
-  MotorA_Left.drive(left);
-  MotorB_Right.drive(right);
-
 }
