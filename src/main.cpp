@@ -21,17 +21,16 @@ void updatePID(int error);
 void bangLineFollow();
 
 // Pin definitions
-const uint8_t QTR_PINS[] = {23, 22, 13, 15, 32, 33, 25, 26};
-const uint8_t QTR_EMITTER = 27;
-// const uint8_t LED_MODE_IDLE = 14;
-const uint8_t LED = 14;
-const uint8_t DRIVER_AIN1 = 17;
-const uint8_t DRIVER_BIN1 = 18;
-const uint8_t DRIVER_AIN2 = 16;
-const uint8_t DRIVER_BIN2 = 19;
-const uint8_t DRIVER_PWMA = 4;
-const uint8_t DRIVER_PWMB = 21;
-const uint8_t DRIVER_STBY = 5;
+const uint8_t QTR_PINS[] = {23, 22, 13, 15, 32, 33, 25, 26};  // from leftmost QTR to rightmost QTR
+const uint8_t QTR_EMITTER = 27;                               // Emitter pin, the one labeled CTRL on the QTR sensor
+const uint8_t LED = 2;                                        // Onboard LED, don't connect to anything
+const uint8_t DRIVER_AIN1 = 17;                               // Motor driver AI1
+const uint8_t DRIVER_BIN1 = 18;                               // Motor driver BI1
+const uint8_t DRIVER_AIN2 = 16;                               // Motor driver AI2
+const uint8_t DRIVER_BIN2 = 19;                               // Motor driver BI2
+const uint8_t DRIVER_PWMA = 4;                                // Motor driver PWMA
+const uint8_t DRIVER_PWMB = 21;                               // Motor driver PWMB
+const uint8_t DRIVER_STBY = 5;                                // Motor driver STBY
 /*
   Available pins in ESP32:
   0, 2, //4, //5, 12, //13, 14, //15, 18, 19, 21, //22, //23, //25, //26, //27, //32, //33
